@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -24,7 +23,7 @@ import (
 	toml "github.com/pelletier/go-toml"
 	"github.com/gottingen/felix"
 	"github.com/spf13/cast"
-	jww "github.com/spf13/jwalterweatherman"
+	"github.com/gottingen/kgb/log"
 	"github.com/spf13/pflag"
 	"github.com/subosito/gotenv"
 )
@@ -269,13 +268,13 @@ func (l *Lung) WatchConfig() {
 	go func() {
 		watcher, err := fsnotify.NewWatcher()
 		if err != nil {
-			log.Fatal(err)
+			log.Logger.Error(err.Error())
 		}
 		defer watcher.Close()
 		// we have to watch the entire directory to pick up renames/atomic saves in a cross-platform way
 		filename, err := l.getConfigFile()
 		if err != nil {
-			log.Printf("error: %v\n", err)
+			log.Logger.Info("error: %v\n", err)
 			initWG.Done()
 			return
 		}
@@ -305,7 +304,7 @@ func (l *Lung) WatchConfig() {
 						realConfigFile = currentConfigFile
 						err := l.ReadInConfig()
 						if err != nil {
-							log.Printf("error reading config file: %v\n", err)
+							log.Logger.Info("error reading config file: %v\n", err)
 						}
 						if l.onConfigChange != nil {
 							l.onConfigChange(event)
@@ -318,7 +317,7 @@ func (l *Lung) WatchConfig() {
 
 				case err, ok := <-watcher.Errors:
 					if ok { // 'Errors' channel is not closed
-						log.Printf("watcher error: %v\n", err)
+						log.Logger.Warn("watcher error: %v\n", err)
 					}
 					eventsWG.Done()
 					return
@@ -394,7 +393,7 @@ func AddConfigPath(in string) { l.AddConfigPath(in) }
 func (l *Lung) AddConfigPath(in string) {
 	if in != "" {
 		absin := absPathify(in)
-		jww.INFO.Println("adding", absin, "to paths to search")
+		log.Logger.Info("adding %s to paths to search", absin)
 		if !stringInSlice(absin, l.configPaths) {
 			l.configPaths = append(l.configPaths, absin)
 		}
@@ -417,7 +416,7 @@ func (l *Lung) AddRemoteProvider(provider, endpoint, path string) error {
 		return UnsupportedRemoteProviderError(provider)
 	}
 	if provider != "" && endpoint != "" {
-		jww.INFO.Printf("adding %s:%s to remote provider list", provider, endpoint)
+		log.Logger.Info("adding %s:%s to remote provider list", provider, endpoint)
 		rp := &defaultRemoteProvider{
 			endpoint: endpoint,
 			provider: provider,
@@ -449,7 +448,7 @@ func (l *Lung) AddSecureRemoteProvider(provider, endpoint, path, secretkeyring s
 		return UnsupportedRemoteProviderError(provider)
 	}
 	if provider != "" && endpoint != "" {
-		jww.INFO.Printf("adding %s:%s to remote provider list", provider, endpoint)
+		log.Logger.Info("adding %s:%s to remote provider list", provider, endpoint)
 		rp := &defaultRemoteProvider{
 			endpoint:      endpoint,
 			provider:      provider,
@@ -1159,14 +1158,14 @@ func (l *Lung) registerAlias(alias string, key string) {
 			l.aliases[alias] = key
 		}
 	} else {
-		jww.WARN.Println("Creating circular reference alias", alias, key, l.realKey(key))
+		log.Logger.Warn("Creating circular reference alias %s %s %s", alias, key, l.realKey(key))
 	}
 }
 
 func (l *Lung) realKey(key string) string {
 	newkey, exists := l.aliases[key]
 	if exists {
-		jww.DEBUG.Println("Alias", key, "to", newkey)
+		log.Logger.Debug("Alias %s to %s", key, newkey)
 		return l.realKey(newkey)
 	}
 	return key
@@ -1221,7 +1220,7 @@ func (l *Lung) Set(key string, value interface{}) {
 // and key/value stores, searching in one of the defined paths.
 func ReadInConfig() error { return l.ReadInConfig() }
 func (l *Lung) ReadInConfig() error {
-	jww.INFO.Println("Attempting to read in config file")
+	log.Logger.Info("Attempting to read in config file")
 	filename, err := l.getConfigFile()
 	if err != nil {
 		return err
@@ -1231,7 +1230,7 @@ func (l *Lung) ReadInConfig() error {
 		return UnsupportedConfigError(l.getConfigType())
 	}
 
-	jww.DEBUG.Println("Reading file: ", filename)
+	log.Logger.Debug("Reading file: %s", filename)
 	file, err := felix.ReadFile(l.fs, filename)
 	if err != nil {
 		return err
@@ -1251,7 +1250,7 @@ func (l *Lung) ReadInConfig() error {
 // MergeInConfig merges a new configuration with an existing config.
 func MergeInConfig() error { return l.MergeInConfig() }
 func (l *Lung) MergeInConfig() error {
-	jww.INFO.Println("Attempting to merge in config file")
+	log.Logger.Info("Attempting to merge in config file")
 	filename, err := l.getConfigFile()
 	if err != nil {
 		return err
@@ -1333,7 +1332,7 @@ func (l *Lung) SafeWriteConfigAs(filename string) error {
 
 func writeConfig(filename string, force bool) error { return l.writeConfig(filename, force) }
 func (l *Lung) writeConfig(filename string, force bool) error {
-	jww.INFO.Println("Attempting to write configuration to file.")
+	log.Logger.Info("Attempting to write configuration to file.")
 	ext := filepath.Ext(filename)
 	if len(ext) <= 1 {
 		return fmt.Errorf("Filename: %s requires valid extension.", filename)
@@ -1558,7 +1557,7 @@ func mergeMaps(
 	for sk, sv := range src {
 		tk := keyExists(sk, tgt)
 		if tk == "" {
-			jww.TRACE.Printf("tk=\"\", tgt[%s]=%v", sk, sv)
+			log.Logger.Trace("tk=\"\", tgt[%s]=%v", sk, sv)
 			tgt[sk] = sv
 			if itgt != nil {
 				itgt[sk] = sv
@@ -1568,7 +1567,7 @@ func mergeMaps(
 
 		tv, ok := tgt[tk]
 		if !ok {
-			jww.TRACE.Printf("tgt[%s] != ok, tgt[%s]=%v", tk, sk, sv)
+			log.Logger.Trace("tgt[%s] != ok, tgt[%s]=%v", tk, sk, sv)
 			tgt[sk] = sv
 			if itgt != nil {
 				itgt[sk] = sv
@@ -1579,27 +1578,27 @@ func mergeMaps(
 		svType := reflect.TypeOf(sv)
 		tvType := reflect.TypeOf(tv)
 		if svType != tvType {
-			jww.ERROR.Printf(
+			log.Logger.Error(
 				"svType != tvType; key=%s, st=%v, tt=%v, sv=%v, tv=%v",
 				sk, svType, tvType, sv, tv)
 			continue
 		}
 
-		jww.TRACE.Printf("processing key=%s, st=%v, tt=%v, sv=%v, tv=%v",
+		log.Logger.Trace("processing key=%s, st=%v, tt=%v, sv=%v, tv=%v",
 			sk, svType, tvType, sv, tv)
 
 		switch ttv := tv.(type) {
 		case map[interface{}]interface{}:
-			jww.TRACE.Printf("merging maps (must convert)")
+			log.Logger.Trace("merging maps (must convert)")
 			tsv := sv.(map[interface{}]interface{})
 			ssv := castToMapStringInterface(tsv)
 			stv := castToMapStringInterface(ttv)
 			mergeMaps(ssv, stv, ttv)
 		case map[string]interface{}:
-			jww.TRACE.Printf("merging maps")
+			log.Logger.Trace("merging maps")
 			mergeMaps(sv.(map[string]interface{}), ttv, nil)
 		default:
-			jww.TRACE.Printf("setting value")
+			log.Logger.Trace("setting value")
 			tgt[tk] = sv
 			if itgt != nil {
 				itgt[tk] = sv
@@ -1853,11 +1852,11 @@ func (l *Lung) getConfigFile() (string, error) {
 }
 
 func (l *Lung) searchInPath(in string) (filename string) {
-	jww.DEBUG.Println("Searching for config in ", in)
+	log.Logger.Debug("Searching for config in ", in)
 	for _, ext := range SupportedExts {
-		jww.DEBUG.Println("Checking for", filepath.Join(in, l.configName+"."+ext))
+		log.Logger.Debug("Checking for", filepath.Join(in, l.configName+"."+ext))
 		if b, _ := exists(l.fs, filepath.Join(in, l.configName+"."+ext)); b {
-			jww.DEBUG.Println("Found: ", filepath.Join(in, l.configName+"."+ext))
+			log.Logger.Debug("Found: ", filepath.Join(in, l.configName+"."+ext))
 			return filepath.Join(in, l.configName+"."+ext)
 		}
 	}
@@ -1868,7 +1867,7 @@ func (l *Lung) searchInPath(in string) (filename string) {
 // Search all configPaths for any config file.
 // Returns the first path that exists (and is a config file).
 func (l *Lung) findConfigFile() (string, error) {
-	jww.INFO.Println("Searching for config in ", l.configPaths)
+	log.Logger.Info("Searching for config in ", l.configPaths)
 
 	for _, cp := range l.configPaths {
 		file := l.searchInPath(cp)
