@@ -22,7 +22,7 @@ import (
 	"github.com/magiconair/properties"
 	"github.com/mitchellh/mapstructure"
 	toml "github.com/pelletier/go-toml"
-	"github.com/spf13/afero"
+	"github.com/gottingen/felix"
 	"github.com/spf13/cast"
 	jww "github.com/spf13/jwalterweatherman"
 	"github.com/spf13/pflag"
@@ -156,7 +156,7 @@ type Lung struct {
 	configPaths []string
 
 	// The filesystem to read config from.
-	fs afero.Fs
+	fs felix.Fs
 
 	// A set of remote providers to search for the configuration
 	remoteProviders []*defaultRemoteProvider
@@ -194,7 +194,7 @@ func New() *Lung {
 	l.keyDelim = "."
 	l.configName = "config"
 	l.configPermissions = os.FileMode(0644)
-	l.fs = afero.NewOsFs()
+	l.fs = felix.NewOsFs()
 	l.config = make(map[string]interface{})
 	l.override = make(map[string]interface{})
 	l.defaults = make(map[string]interface{})
@@ -1232,7 +1232,7 @@ func (l *Lung) ReadInConfig() error {
 	}
 
 	jww.DEBUG.Println("Reading file: ", filename)
-	file, err := afero.ReadFile(l.fs, filename)
+	file, err := felix.ReadFile(l.fs, filename)
 	if err != nil {
 		return err
 	}
@@ -1261,7 +1261,7 @@ func (l *Lung) MergeInConfig() error {
 		return UnsupportedConfigError(l.getConfigType())
 	}
 
-	file, err := afero.ReadFile(l.fs, filename)
+	file, err := felix.ReadFile(l.fs, filename)
 	if err != nil {
 		return err
 	}
@@ -1432,10 +1432,10 @@ func (l *Lung) unmarshalReader(in io.Reader, c map[string]interface{}) error {
 }
 
 // Marshal a map into Writer.
-func marshalWriter(f afero.File, configType string) error {
+func marshalWriter(f felix.File, configType string) error {
 	return l.marshalWriter(f, configType)
 }
-func (l *Lung) marshalWriter(f afero.File, configType string) error {
+func (l *Lung) marshalWriter(f felix.File, configType string) error {
 	c := l.AllSettings()
 	switch configType {
 	case "json":
@@ -1792,8 +1792,8 @@ func (l *Lung) AllSettings() map[string]interface{} {
 }
 
 // SetFs sets the filesystem to use to read configuration.
-func SetFs(fs afero.Fs) { l.SetFs(fs) }
-func (l *Lung) SetFs(fs afero.Fs) {
+func SetFs(fs felix.Fs) { l.SetFs(fs) }
+func (l *Lung) SetFs(fs felix.Fs) {
 	l.fs = fs
 }
 

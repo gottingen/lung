@@ -4,6 +4,7 @@ go 1.13
 
 require (
 	github.com/fsnotify/fsnotify v1.4.7
+	github.com/gottingen/felix v0.1.0
 	github.com/hashicorp/hcl v1.0.0
 	github.com/magiconair/properties v1.8.1
 	github.com/mitchellh/mapstructure v1.1.2
