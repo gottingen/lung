@@ -20,11 +20,13 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/mitchellh/mapstructure"
 	"github.com/gottingen/felix"
+	"github.com/gottingen/kgb/log"
 	"github.com/spf13/cast"
 
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 )
 
 var yamlExample = []byte(`Hacker: true
@@ -267,6 +269,7 @@ func (s *stringValue) String() string {
 }
 
 func TestBasics(t *testing.T) {
+	log.Logger.Info("start test")
 	SetConfigFile("/tmp/config.yaml")
 	filename, err := l.getConfigFile()
 	assert.Equal(t, "/tmp/config.yaml", filename)
