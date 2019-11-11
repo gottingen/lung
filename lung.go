@@ -22,6 +22,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 	toml "github.com/pelletier/go-toml"
 	"github.com/gottingen/felix"
+	"github.com/gottingen/felix/vfs"
 	"github.com/spf13/cast"
 	"github.com/gottingen/kgb/log"
 	"github.com/spf13/pflag"
@@ -155,7 +156,7 @@ type Lung struct {
 	configPaths []string
 
 	// The filesystem to read config from.
-	fs felix.Fs
+	fs felix.Felix
 
 	// A set of remote providers to search for the configuration
 	remoteProviders []*defaultRemoteProvider
@@ -193,7 +194,7 @@ func New() *Lung {
 	l.keyDelim = "."
 	l.configName = "config"
 	l.configPermissions = os.FileMode(0644)
-	l.fs = felix.NewOsFs()
+	l.fs = felix.NewOsVfs()
 	l.config = make(map[string]interface{})
 	l.override = make(map[string]interface{})
 	l.defaults = make(map[string]interface{})
@@ -1231,7 +1232,7 @@ func (l *Lung) ReadInConfig() error {
 	}
 
 	log.Logger.Debug("Reading file: %s", filename)
-	file, err := felix.ReadFile(l.fs, filename)
+	file, err := l.fs.ReadFile(filename)
 	if err != nil {
 		return err
 	}
@@ -1260,7 +1261,7 @@ func (l *Lung) MergeInConfig() error {
 		return UnsupportedConfigError(l.getConfigType())
 	}
 
-	file, err := felix.ReadFile(l.fs, filename)
+	file, err := l.fs.ReadFile(filename)
 	if err != nil {
 		return err
 	}
@@ -1348,7 +1349,7 @@ func (l *Lung) writeConfig(filename string, force bool) error {
 	if !force {
 		flags |= os.O_EXCL
 	}
-	f, err := l.fs.OpenFile(filename, flags, l.configPermissions)
+	f, err := l.fs.Vfs.OpenFile(filename, flags, l.configPermissions)
 	if err != nil {
 		return err
 	}
@@ -1431,10 +1432,10 @@ func (l *Lung) unmarshalReader(in io.Reader, c map[string]interface{}) error {
 }
 
 // Marshal a map into Writer.
-func marshalWriter(f felix.File, configType string) error {
+func marshalWriter(f vfs.File, configType string) error {
 	return l.marshalWriter(f, configType)
 }
-func (l *Lung) marshalWriter(f felix.File, configType string) error {
+func (l *Lung) marshalWriter(f vfs.File, configType string) error {
 	c := l.AllSettings()
 	switch configType {
 	case "json":
@@ -1791,8 +1792,8 @@ func (l *Lung) AllSettings() map[string]interface{} {
 }
 
 // SetFs sets the filesystem to use to read configuration.
-func SetFs(fs felix.Fs) { l.SetFs(fs) }
-func (l *Lung) SetFs(fs felix.Fs) {
+func SetFs(fs felix.Felix) { l.SetFs(fs) }
+func (l *Lung) SetFs(fs felix.Felix) {
 	l.fs = fs
 }
 

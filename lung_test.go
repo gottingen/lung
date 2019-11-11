@@ -1138,7 +1138,7 @@ var hclWriteExpected = []byte(`"foos" = {
 
 func TestWriteConfigHCL(t *testing.T) {
 	v := New()
-	fs := felix.NewMemMapFs()
+	fs := felix.NewMemVfs()
 	v.SetFs(fs)
 	v.SetConfigName("c")
 	v.SetConfigType("hcl")
@@ -1149,7 +1149,7 @@ func TestWriteConfigHCL(t *testing.T) {
 	if err := v.WriteConfigAs("c.hcl"); err != nil {
 		t.Fatal(err)
 	}
-	read, err := felix.ReadFile(fs, "c.hcl")
+	read, err := fs.ReadFile("c.hcl")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1181,7 +1181,7 @@ var jsonWriteExpected = []byte(`{
 
 func TestWriteConfigJson(t *testing.T) {
 	v := New()
-	fs := felix.NewMemMapFs()
+	fs := felix.NewMemVfs()
 	v.SetFs(fs)
 	v.SetConfigName("c")
 	v.SetConfigType("json")
@@ -1192,7 +1192,7 @@ func TestWriteConfigJson(t *testing.T) {
 	if err := v.WriteConfigAs("c.json"); err != nil {
 		t.Fatal(err)
 	}
-	read, err := felix.ReadFile(fs, "c.json")
+	read, err := fs.ReadFile( "c.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1208,7 +1208,7 @@ p_batters.batter.type = Regular
 
 func TestWriteConfigProperties(t *testing.T) {
 	v := New()
-	fs := felix.NewMemMapFs()
+	fs := felix.NewMemVfs()
 	v.SetFs(fs)
 	v.SetConfigName("c")
 	v.SetConfigType("properties")
@@ -1219,7 +1219,7 @@ func TestWriteConfigProperties(t *testing.T) {
 	if err := v.WriteConfigAs("c.properties"); err != nil {
 		t.Fatal(err)
 	}
-	read, err := felix.ReadFile(fs, "c.properties")
+	read, err := fs.ReadFile( "c.properties")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1227,7 +1227,7 @@ func TestWriteConfigProperties(t *testing.T) {
 }
 
 func TestWriteConfigTOML(t *testing.T) {
-	fs := felix.NewMemMapFs()
+	fs := felix.NewMemVfs()
 	v := New()
 	v.SetFs(fs)
 	v.SetConfigName("c")
@@ -1265,7 +1265,7 @@ KIND=Biscuit
 `)
 
 func TestWriteConfigDotEnv(t *testing.T) {
-	fs := felix.NewMemMapFs()
+	fs := felix.NewMemVfs()
 	v := New()
 	v.SetFs(fs)
 	v.SetConfigName("c")
@@ -1313,7 +1313,7 @@ name: steve
 
 func TestWriteConfigYAML(t *testing.T) {
 	v := New()
-	fs := felix.NewMemMapFs()
+	fs := felix.NewMemVfs()
 	v.SetFs(fs)
 	v.SetConfigName("c")
 	v.SetConfigType("yaml")
@@ -1324,7 +1324,7 @@ func TestWriteConfigYAML(t *testing.T) {
 	if err := v.WriteConfigAs("c.yaml"); err != nil {
 		t.Fatal(err)
 	}
-	read, err := felix.ReadFile(fs, "c.yaml")
+	read, err := fs.ReadFile( "c.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
