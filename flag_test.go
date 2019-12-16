@@ -1,14 +1,14 @@
 package lung
 
 import (
-"testing"
+	"testing"
 
-"github.com/spf13/pflag"
-"github.com/stretchr/testify/assert"
+	"github.com/gottingen/gekko/gflag"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestBindFlagValueSet(t *testing.T) {
-	flagSet := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flagSet := gflag.NewFlagSet("test", gflag.ContinueOnError)
 
 	var testValues = map[string]*string{
 		"host":     nil,
@@ -26,14 +26,14 @@ func TestBindFlagValueSet(t *testing.T) {
 		testValues[name] = flagSet.String(name, "", "test")
 	}
 
-	flagValueSet := pflagValueSet{flagSet}
+	flagValueSet := gflagValueSet{flagSet}
 
 	err := BindFlagValues(flagValueSet)
 	if err != nil {
 		t.Fatalf("error binding flag set, %v", err)
 	}
 
-	flagSet.VisitAll(func(flag *pflag.Flag) {
+	flagSet.VisitAll(func(flag *gflag.Flag) {
 		flag.Value.Set(mutatedTestValues[flag.Name])
 		flag.Changed = true
 	})
@@ -47,19 +47,19 @@ func TestBindFlagValue(t *testing.T) {
 	var testString = "testing"
 	var testValue = newStringValue(testString, &testString)
 
-	flag := &pflag.Flag{
+	flag := &gflag.Flag{
 		Name:    "testflag",
 		Value:   testValue,
 		Changed: false,
 	}
 
-	flagValue := pflagValue{flag}
+	flagValue := gflagValue{flag}
 	BindFlagValue("testvalue", flagValue)
 
 	assert.Equal(t, testString, Get("testvalue"))
 
 	flag.Value.Set("testing_mutate")
-	flag.Changed = true //hack for pflag usage
+	flag.Changed = true //hack for gflag usage
 
 	assert.Equal(t, "testing_mutate", Get("testvalue"))
 }

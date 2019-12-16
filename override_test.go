@@ -5,7 +5,7 @@ import (
 "strings"
 "testing"
 
-"github.com/spf13/cast"
+"github.com/gottingen/gekko/cast"
 "github.com/stretchr/testify/assert"
 )
 

@@ -18,15 +18,13 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/mitchellh/mapstructure"
 	"github.com/gottingen/felix"
-	"github.com/gottingen/kgb/log"
-	"github.com/spf13/cast"
+	"github.com/gottingen/gekko/cast"
+	"github.com/mitchellh/mapstructure"
 
-	"github.com/spf13/pflag"
+	"github.com/gottingen/gekko/gflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
 )
 
 var yamlExample = []byte(`Hacker: true
@@ -81,26 +79,6 @@ var jsonExample = []byte(`{
     }
 }`)
 
-var hclExample = []byte(`
-id = "0001"
-type = "donut"
-name = "Cake"
-ppu = 0.55
-foos {
-	foo {
-		key = 1
-	}
-	foo {
-		key = 2
-	}
-	foo {
-		key = 3
-	}
-	foo {
-		key = 4
-	}
-}`)
-
 var propertiesExample = []byte(`
 p_id: 0001
 p_type: donut
@@ -124,10 +102,6 @@ func initConfigs() {
 
 	SetConfigType("json")
 	r = bytes.NewReader(jsonExample)
-	unmarshalReader(r, l.config)
-
-	SetConfigType("hcl")
-	r = bytes.NewReader(hclExample)
 	unmarshalReader(r, l.config)
 
 	SetConfigType("properties")
@@ -189,14 +163,6 @@ func initDotEnv() {
 	Reset()
 	SetConfigType("env")
 	r := bytes.NewReader(dotenvExample)
-
-	unmarshalReader(r, l.config)
-}
-
-func initHcl() {
-	Reset()
-	SetConfigType("hcl")
-	r := bytes.NewReader(hclExample)
 
 	unmarshalReader(r, l.config)
 }
@@ -269,7 +235,6 @@ func (s *stringValue) String() string {
 }
 
 func TestBasics(t *testing.T) {
-	log.Logger.Info("start test")
 	SetConfigFile("/tmp/config.yaml")
 	filename, err := l.getConfigFile()
 	assert.Equal(t, "/tmp/config.yaml", filename)
@@ -365,17 +330,6 @@ func TestTOML(t *testing.T) {
 func TestDotEnv(t *testing.T) {
 	initDotEnv()
 	assert.Equal(t, "DotEnv Example", Get("title_dotenv"))
-}
-
-func TestHCL(t *testing.T) {
-	initHcl()
-	assert.Equal(t, "0001", Get("id"))
-	assert.Equal(t, 0.55, Get("ppu"))
-	assert.Equal(t, "donut", Get("type"))
-	assert.Equal(t, "Cake", Get("name"))
-	Set("id", "0002")
-	assert.Equal(t, "0002", Get("id"))
-	assert.NotEqual(t, "cronut", Get("type"))
 }
 
 func TestRemotePrecedence(t *testing.T) {
@@ -525,7 +479,6 @@ func TestAllKeys(t *testing.T) {
 		"p_batters.batter.type",
 		"p_type",
 		"p_name",
-		"foos",
 		"title_dotenv",
 		"type_dotenv",
 		"name_dotenv",
@@ -572,15 +525,6 @@ func TestAllKeys(t *testing.T) {
 			"batter": map[string]interface{}{"type": "Regular"},
 		},
 		"p_type": "donut",
-		"foos": []map[string]interface{}{
-			{
-				"foo": []map[string]interface{}{
-					{"key": 1},
-					{"key": 2},
-					{"key": 3},
-					{"key": 4}},
-			},
-		},
 		"title_dotenv": "DotEnv Example",
 		"type_dotenv":  "donut",
 		"name_dotenv":  "Cake",
@@ -710,7 +654,7 @@ func TestUnmarshalWithDecoderOptions(t *testing.T) {
 
 func TestBindPFlags(t *testing.T) {
 	v := New() // create independent Lung object
-	flagSet := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flagSet := gflag.NewFlagSet("test", gflag.ContinueOnError)
 
 	var testValues = map[string]*string{
 		"host":     nil,
@@ -733,7 +677,7 @@ func TestBindPFlags(t *testing.T) {
 		t.Fatalf("error binding flag set, %v", err)
 	}
 
-	flagSet.VisitAll(func(flag *pflag.Flag) {
+	flagSet.VisitAll(func(flag *gflag.Flag) {
 		flag.Value.Set(mutatedTestValues[flag.Name])
 		flag.Changed = true
 	})
@@ -760,11 +704,11 @@ func TestBindPFlagsStringSlice(t *testing.T) {
 	v.SetDefault("stringslice", defaultVal)
 
 	for _, testValue := range tests {
-		flagSet := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		flagSet := gflag.NewFlagSet("test", gflag.ContinueOnError)
 		flagSet.StringSlice("stringslice", testValue.Expected, "test")
 
 		for _, changed := range []bool{true, false} {
-			flagSet.VisitAll(func(f *pflag.Flag) {
+			flagSet.VisitAll(func(f *gflag.Flag) {
 				f.Value.Set(testValue.Value)
 				f.Changed = changed
 			})
@@ -805,11 +749,11 @@ func TestBindPFlagsIntSlice(t *testing.T) {
 	v.SetDefault("intslice", defaultVal)
 
 	for _, testValue := range tests {
-		flagSet := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		flagSet := gflag.NewFlagSet("test", gflag.ContinueOnError)
 		flagSet.IntSlice("intslice", testValue.Expected, "test")
 
 		for _, changed := range []bool{true, false} {
-			flagSet.VisitAll(func(f *pflag.Flag) {
+			flagSet.VisitAll(func(f *gflag.Flag) {
 				f.Value.Set(testValue.Value)
 				f.Changed = changed
 			})
@@ -839,7 +783,7 @@ func TestBindPFlag(t *testing.T) {
 	var testString = "testing"
 	var testValue = newStringValue(testString, &testString)
 
-	flag := &pflag.Flag{
+	flag := &gflag.Flag{
 		Name:    "testflag",
 		Value:   testValue,
 		Changed: false,
@@ -850,7 +794,7 @@ func TestBindPFlag(t *testing.T) {
 	assert.Equal(t, testString, Get("testvalue"))
 
 	flag.Value.Set("testing_mutate")
-	flag.Changed = true // hack for pflag usage
+	flag.Changed = true // hack for gflag usage
 
 	assert.Equal(t, "testing_mutate", Get("testvalue"))
 
@@ -867,7 +811,7 @@ func TestBoundCaseSensitivity(t *testing.T) {
 	var testString = "green"
 	var testValue = newStringValue(testString, &testString)
 
-	flag := &pflag.Flag{
+	flag := &gflag.Flag{
 		Name:    "eyeballs",
 		Value:   testValue,
 		Changed: true,
@@ -977,24 +921,6 @@ func TestFindsNestedKeys(t *testing.T) {
 		"clothing.trousers":   "denim",
 		"owner.dob":           dob,
 		"beard":               true,
-		"foos": []map[string]interface{}{
-			map[string]interface{}{
-				"foo": []map[string]interface{}{
-					map[string]interface{}{
-						"key": 1,
-					},
-					map[string]interface{}{
-						"key": 2,
-					},
-					map[string]interface{}{
-						"key": 3,
-					},
-					map[string]interface{}{
-						"key": 4,
-					},
-				},
-			},
-		},
 	}
 
 	for key, expectedValue := range expected {
@@ -1110,52 +1036,6 @@ func TestSub(t *testing.T) {
 	assert.Equal(t, (*Lung)(nil), subv)
 }
 
-var hclWriteExpected = []byte(`"foos" = {
-  "foo" = {
-    "key" = 1
-  }
-
-  "foo" = {
-    "key" = 2
-  }
-
-  "foo" = {
-    "key" = 3
-  }
-
-  "foo" = {
-    "key" = 4
-  }
-}
-
-"id" = "0001"
-
-"name" = "Cake"
-
-"ppu" = 0.55
-
-"type" = "donut"`)
-
-func TestWriteConfigHCL(t *testing.T) {
-	v := New()
-	fs := felix.NewMemVfs()
-	v.SetFs(fs)
-	v.SetConfigName("c")
-	v.SetConfigType("hcl")
-	err := v.ReadConfig(bytes.NewBuffer(hclExample))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := v.WriteConfigAs("c.hcl"); err != nil {
-		t.Fatal(err)
-	}
-	read, err := fs.ReadFile("c.hcl")
-	if err != nil {
-		t.Fatal(err)
-	}
-	assert.Equal(t, hclWriteExpected, read)
-}
-
 var jsonWriteExpected = []byte(`{
   "batters": {
     "batter": [
@@ -1192,7 +1072,7 @@ func TestWriteConfigJson(t *testing.T) {
 	if err := v.WriteConfigAs("c.json"); err != nil {
 		t.Fatal(err)
 	}
-	read, err := fs.ReadFile( "c.json")
+	read, err := fs.ReadFile("c.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1219,7 +1099,7 @@ func TestWriteConfigProperties(t *testing.T) {
 	if err := v.WriteConfigAs("c.properties"); err != nil {
 		t.Fatal(err)
 	}
-	read, err := fs.ReadFile( "c.properties")
+	read, err := fs.ReadFile("c.properties")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1324,7 +1204,7 @@ func TestWriteConfigYAML(t *testing.T) {
 	if err := v.WriteConfigAs("c.yaml"); err != nil {
 		t.Fatal(err)
 	}
-	read, err := fs.ReadFile( "c.yaml")
+	read, err := fs.ReadFile("c.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1839,7 +1719,7 @@ func TestWatchFile(t *testing.T) {
 }
 
 func TestUnmarshal_DotSeparatorBackwardCompatibility(t *testing.T) {
-	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags := gflag.NewFlagSet("test", gflag.ContinueOnError)
 	flags.String("foo.bar", "cobra_flag", "")
 
 	v := New()

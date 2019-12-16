@@ -16,17 +16,15 @@ import (
 	yaml "gopkg.in/yaml.v2"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/hashicorp/hcl"
-	"github.com/hashicorp/hcl/hcl/printer"
+	"github.com/gottingen/felix"
+	"github.com/gottingen/felix/vfs"
+	"github.com/gottingen/gekko/cast"
+	"github.com/gottingen/gekko/env"
+	"github.com/gottingen/gekko/gflag"
+	"github.com/gottingen/viper"
 	"github.com/magiconair/properties"
 	"github.com/mitchellh/mapstructure"
 	toml "github.com/pelletier/go-toml"
-	"github.com/gottingen/felix"
-	"github.com/gottingen/felix/vfs"
-	"github.com/spf13/cast"
-	"github.com/gottingen/kgb/log"
-	"github.com/spf13/pflag"
-	"github.com/subosito/gotenv"
 )
 
 // ConfigMarshalError happens when failing to marshal the configuration.
@@ -41,23 +39,9 @@ func (e ConfigMarshalError) Error() string {
 
 var l *Lung
 
-type RemoteResponse struct {
-	Value []byte
-	Error error
-}
-
 func init() {
 	l = New()
 }
-
-type remoteConfigFactory interface {
-	Get(rp RemoteProvider) (io.Reader, error)
-	Watch(rp RemoteProvider) (io.Reader, error)
-	WatchChannel(rp RemoteProvider) (<-chan *RemoteResponse, chan bool)
-}
-
-// RemoteConfig is optional, see the remote package
-var RemoteConfig remoteConfigFactory
 
 // UnsupportedConfigError denotes encountering an unsupported
 // configuration filetype.
@@ -66,24 +50,6 @@ type UnsupportedConfigError string
 // Error returns the formatted configuration error.
 func (str UnsupportedConfigError) Error() string {
 	return fmt.Sprintf("Unsupported Config Type %q", string(str))
-}
-
-// UnsupportedRemoteProviderError denotes encountering an unsupported remote
-// provider. Currently only etcd and Consul are supported.
-type UnsupportedRemoteProviderError string
-
-// Error returns the formatted remote provider error.
-func (str UnsupportedRemoteProviderError) Error() string {
-	return fmt.Sprintf("Unsupported Remote Provider Type %q", string(str))
-}
-
-// RemoteConfigError denotes encountering an error while trying to
-// pull the configuration from the remote provider.
-type RemoteConfigError string
-
-// Error returns the formatted remote provider error
-func (rce RemoteConfigError) Error() string {
-	return fmt.Sprintf("Remote Configurations Error: %s", string(rce))
 }
 
 // ConfigFileNotFoundError denotes failing to find configuration file.
@@ -158,9 +124,6 @@ type Lung struct {
 	// The filesystem to read config from.
 	fs felix.Felix
 
-	// A set of remote providers to search for the configuration
-	remoteProviders []*defaultRemoteProvider
-
 	// Name of file to look for inside the path
 	configName        string
 	configFile        string
@@ -176,7 +139,7 @@ type Lung struct {
 	override       map[string]interface{}
 	defaults       map[string]interface{}
 	kvstore        map[string]interface{}
-	pflags         map[string]FlagValue
+	gflags         map[string]FlagValue
 	env            map[string]string
 	aliases        map[string]string
 	typeByDefValue bool
@@ -186,6 +149,8 @@ type Lung struct {
 	properties *properties.Properties
 
 	onConfigChange func(fsnotify.Event)
+
+	logger *viper.Logger
 }
 
 // New returns an initialized Lung instance.
@@ -199,10 +164,11 @@ func New() *Lung {
 	l.override = make(map[string]interface{})
 	l.defaults = make(map[string]interface{})
 	l.kvstore = make(map[string]interface{})
-	l.pflags = make(map[string]FlagValue)
+	l.gflags = make(map[string]FlagValue)
 	l.env = make(map[string]string)
 	l.aliases = make(map[string]string)
 	l.typeByDefValue = false
+	l.logger = viper.NewExample()
 
 	return l
 }
@@ -212,49 +178,11 @@ func New() *Lung {
 // can use it in their testing as well.
 func Reset() {
 	l = New()
-	SupportedExts = []string{"json", "toml", "yaml", "yml", "properties", "props", "prop", "hcl", "dotenv", "env"}
-	SupportedRemoteProviders = []string{"etcd", "consul"}
-}
-
-type defaultRemoteProvider struct {
-	provider      string
-	endpoint      string
-	path          string
-	secretKeyring string
-}
-
-func (rp defaultRemoteProvider) Provider() string {
-	return rp.provider
-}
-
-func (rp defaultRemoteProvider) Endpoint() string {
-	return rp.endpoint
-}
-
-func (rp defaultRemoteProvider) Path() string {
-	return rp.path
-}
-
-func (rp defaultRemoteProvider) SecretKeyring() string {
-	return rp.secretKeyring
-}
-
-// RemoteProvider stores the configuration necessary
-// to connect to a remote key/value store.
-// Optional secretKeyring to unencrypt encrypted values
-// can be provided.
-type RemoteProvider interface {
-	Provider() string
-	Endpoint() string
-	Path() string
-	SecretKeyring() string
+	SupportedExts = []string{"json", "toml", "yaml", "yml", "properties", "props", "prop", "dotenv", "env"}
 }
 
 // SupportedExts are universally supported extensions.
-var SupportedExts = []string{"json", "toml", "yaml", "yml", "properties", "props", "prop", "hcl", "dotenv", "env"}
-
-// SupportedRemoteProviders are universally supported remote providers.
-var SupportedRemoteProviders = []string{"etcd", "consul"}
+var SupportedExts = []string{"json", "toml", "yaml", "yml", "properties", "props", "prop", "dotenv", "env"}
 
 func OnConfigChange(run func(in fsnotify.Event)) { l.OnConfigChange(run) }
 func (l *Lung) OnConfigChange(run func(in fsnotify.Event)) {
@@ -269,13 +197,13 @@ func (l *Lung) WatchConfig() {
 	go func() {
 		watcher, err := fsnotify.NewWatcher()
 		if err != nil {
-			log.Logger.Error(err.Error())
+			l.logger.Error(err.Error())
 		}
 		defer watcher.Close()
 		// we have to watch the entire directory to pick up renames/atomic saves in a cross-platform way
 		filename, err := l.getConfigFile()
 		if err != nil {
-			log.Logger.Info("error: %v\n", err)
+			l.logger.Info("err:", viper.Error(err))
 			initWG.Done()
 			return
 		}
@@ -305,7 +233,7 @@ func (l *Lung) WatchConfig() {
 						realConfigFile = currentConfigFile
 						err := l.ReadInConfig()
 						if err != nil {
-							log.Logger.Info("error reading config file: %v\n", err)
+							l.logger.Info("error reading config file ", viper.Error(err))
 						}
 						if l.onConfigChange != nil {
 							l.onConfigChange(event)
@@ -318,7 +246,7 @@ func (l *Lung) WatchConfig() {
 
 				case err, ok := <-watcher.Errors:
 					if ok { // 'Errors' channel is not closed
-						log.Logger.Warn("watcher error: %v\n", err)
+						l.logger.Warn("watcher error: ", viper.Error(err))
 					}
 					eventsWG.Done()
 					return
@@ -385,7 +313,7 @@ func (l *Lung) getEnv(key string) (string, bool) {
 }
 
 // ConfigFileUsed returns the file used to populate the config registry.
-func ConfigFileUsed() string            { return l.ConfigFileUsed() }
+func ConfigFileUsed() string           { return l.ConfigFileUsed() }
 func (l *Lung) ConfigFileUsed() string { return l.configFile }
 
 // AddConfigPath adds a path for Lung to search for the config file in.
@@ -394,82 +322,11 @@ func AddConfigPath(in string) { l.AddConfigPath(in) }
 func (l *Lung) AddConfigPath(in string) {
 	if in != "" {
 		absin := absPathify(in)
-		log.Logger.Info("adding %s to paths to search", absin)
+		l.logger.Info("adding %s to paths to search", viper.String("absin", absin))
 		if !stringInSlice(absin, l.configPaths) {
 			l.configPaths = append(l.configPaths, absin)
 		}
 	}
-}
-
-// AddRemoteProvider adds a remote configuration source.
-// Remote Providers are searched in the order they are added.
-// provider is a string value, "etcd" or "consul" are currently supported.
-// endpoint is the url.  etcd requires http://ip:port  consul requires ip:port
-// path is the path in the k/v store to retrieve configuration
-// To retrieve a config file called myapp.json from /configs/myapp.json
-// you should set path to /configs and set config name (SetConfigName()) to
-// "myapp"
-func AddRemoteProvider(provider, endpoint, path string) error {
-	return l.AddRemoteProvider(provider, endpoint, path)
-}
-func (l *Lung) AddRemoteProvider(provider, endpoint, path string) error {
-	if !stringInSlice(provider, SupportedRemoteProviders) {
-		return UnsupportedRemoteProviderError(provider)
-	}
-	if provider != "" && endpoint != "" {
-		log.Logger.Info("adding %s:%s to remote provider list", provider, endpoint)
-		rp := &defaultRemoteProvider{
-			endpoint: endpoint,
-			provider: provider,
-			path:     path,
-		}
-		if !l.providerPathExists(rp) {
-			l.remoteProviders = append(l.remoteProviders, rp)
-		}
-	}
-	return nil
-}
-
-// AddSecureRemoteProvider adds a remote configuration source.
-// Secure Remote Providers are searched in the order they are added.
-// provider is a string value, "etcd" or "consul" are currently supported.
-// endpoint is the url.  etcd requires http://ip:port  consul requires ip:port
-// secretkeyring is the filepath to your openpgp secret keyring.  e.g. /etc/secrets/myring.gpg
-// path is the path in the k/v store to retrieve configuration
-// To retrieve a config file called myapp.json from /configs/myapp.json
-// you should set path to /configs and set config name (SetConfigName()) to
-// "myapp"
-// Secure Remote Providers are implemented with github.com/xordataexchange/crypt
-func AddSecureRemoteProvider(provider, endpoint, path, secretkeyring string) error {
-	return l.AddSecureRemoteProvider(provider, endpoint, path, secretkeyring)
-}
-
-func (l *Lung) AddSecureRemoteProvider(provider, endpoint, path, secretkeyring string) error {
-	if !stringInSlice(provider, SupportedRemoteProviders) {
-		return UnsupportedRemoteProviderError(provider)
-	}
-	if provider != "" && endpoint != "" {
-		log.Logger.Info("adding %s:%s to remote provider list", provider, endpoint)
-		rp := &defaultRemoteProvider{
-			endpoint:      endpoint,
-			provider:      provider,
-			path:          path,
-			secretKeyring: secretkeyring,
-		}
-		if !l.providerPathExists(rp) {
-			l.remoteProviders = append(l.remoteProviders, rp)
-		}
-	}
-	return nil
-}
-
-func (l *Lung) providerPathExists(p *defaultRemoteProvider) bool {
-	for _, y := range l.remoteProviders {
-		if reflect.DeepEqual(y, p) {
-			return true
-		}
-	}
-	return false
 }
 
 // searchMap recursively searches for a value for path in source map.
@@ -890,20 +747,20 @@ func (l *Lung) UnmarshalExact(rawVal interface{}) error {
 
 // BindPFlags binds a full flag set to the configuration, using each flag's long
 // name as the config key.
-func BindPFlags(flags *pflag.FlagSet) error { return l.BindPFlags(flags) }
-func (l *Lung) BindPFlags(flags *pflag.FlagSet) error {
-	return l.BindFlagValues(pflagValueSet{flags})
+func BindPFlags(flags *gflag.FlagSet) error { return l.BindPFlags(flags) }
+func (l *Lung) BindPFlags(flags *gflag.FlagSet) error {
+	return l.BindFlagValues(gflagValueSet{flags})
 }
 
-// BindPFlag binds a specific key to a pflag (as used by cobra).
+// BindPFlag binds a specific key to a gflag (as used by cobra).
 // Example (where serverCmd is a Cobra instance):
 //
 //	 serverCmd.Flags().Int("port", 1138, "Port to run Application server on")
 //	 Lung.BindPFlag("port", serverCmd.Flags().Lookup("port"))
 //
-func BindPFlag(key string, flag *pflag.Flag) error { return l.BindPFlag(key, flag) }
-func (l *Lung) BindPFlag(key string, flag *pflag.Flag) error {
-	return l.BindFlagValue(key, pflagValue{flag})
+func BindPFlag(key string, flag *gflag.Flag) error { return l.BindPFlag(key, flag) }
+func (l *Lung) BindPFlag(key string, flag *gflag.Flag) error {
+	return l.BindFlagValue(key, gflagValue{flag})
 }
 
 // BindFlagValues binds a full FlagValue set to the configuration, using each flag's long
@@ -929,7 +786,7 @@ func (l *Lung) BindFlagValue(key string, flag FlagValue) error {
 	if flag == nil {
 		return fmt.Errorf("flag for %q is nil", key)
 	}
-	l.pflags[strings.ToLower(key)] = flag
+	l.gflags[strings.ToLower(key)] = flag
 	return nil
 }
 
@@ -991,7 +848,7 @@ func (l *Lung) find(lcaseKey string) interface{} {
 	}
 
 	// PFlag override next
-	flag, exists := l.pflags[lcaseKey]
+	flag, exists := l.gflags[lcaseKey]
 	if exists && flag.HasChanged() {
 		switch flag.ValueType() {
 		case "int", "int8", "int16", "int32", "int64":
@@ -1012,7 +869,7 @@ func (l *Lung) find(lcaseKey string) interface{} {
 			return flag.ValueString()
 		}
 	}
-	if nested && l.isPathShadowedInFlatMap(path, l.pflags) != "" {
+	if nested && l.isPathShadowedInFlatMap(path, l.gflags) != "" {
 		return nil
 	}
 
@@ -1066,7 +923,7 @@ func (l *Lung) find(lcaseKey string) interface{} {
 
 	// last chance: if no other value is returned and a flag does exist for the value,
 	// get the flag's value even if the flag's value has not changed
-	if flag, exists := l.pflags[lcaseKey]; exists {
+	if flag, exists := l.gflags[lcaseKey]; exists {
 		switch flag.ValueType() {
 		case "int", "int8", "int16", "int32", "int64":
 			return cast.ToInt(flag.ValueString())
@@ -1159,14 +1016,15 @@ func (l *Lung) registerAlias(alias string, key string) {
 			l.aliases[alias] = key
 		}
 	} else {
-		log.Logger.Warn("Creating circular reference alias %s %s %s", alias, key, l.realKey(key))
+		l.logger.Warn("Creating circular reference alias %s %s %s", viper.String("alias",alias),
+			viper.String("key",key), viper.String("realKey",l.realKey(key)))
 	}
 }
 
 func (l *Lung) realKey(key string) string {
 	newkey, exists := l.aliases[key]
 	if exists {
-		log.Logger.Debug("Alias %s to %s", key, newkey)
+		l.logger.Debug("Alias %s to %s", viper.String("key",key), viper.String("newkey",newkey))
 		return l.realKey(newkey)
 	}
 	return key
@@ -1221,7 +1079,7 @@ func (l *Lung) Set(key string, value interface{}) {
 // and key/value stores, searching in one of the defined paths.
 func ReadInConfig() error { return l.ReadInConfig() }
 func (l *Lung) ReadInConfig() error {
-	log.Logger.Info("Attempting to read in config file")
+	l.logger.Info("Attempting to read in config file")
 	filename, err := l.getConfigFile()
 	if err != nil {
 		return err
@@ -1231,7 +1089,7 @@ func (l *Lung) ReadInConfig() error {
 		return UnsupportedConfigError(l.getConfigType())
 	}
 
-	log.Logger.Debug("Reading file: %s", filename)
+	l.logger.Debug("Reading file ", viper.String("filename", filename))
 	file, err := l.fs.ReadFile(filename)
 	if err != nil {
 		return err
@@ -1251,7 +1109,7 @@ func (l *Lung) ReadInConfig() error {
 // MergeInConfig merges a new configuration with an existing config.
 func MergeInConfig() error { return l.MergeInConfig() }
 func (l *Lung) MergeInConfig() error {
-	log.Logger.Info("Attempting to merge in config file")
+	l.logger.Info("Attempting to merge in config file")
 	filename, err := l.getConfigFile()
 	if err != nil {
 		return err
@@ -1333,7 +1191,7 @@ func (l *Lung) SafeWriteConfigAs(filename string) error {
 
 func writeConfig(filename string, force bool) error { return l.writeConfig(filename, force) }
 func (l *Lung) writeConfig(filename string, force bool) error {
-	log.Logger.Info("Attempting to write configuration to file.")
+	l.logger.Info("Attempting to write configuration to file.")
 	ext := filepath.Ext(filename)
 	if len(ext) <= 1 {
 		return fmt.Errorf("Filename: %s requires valid extension.", filename)
@@ -1381,16 +1239,6 @@ func (l *Lung) unmarshalReader(in io.Reader, c map[string]interface{}) error {
 		if err := json.Unmarshal(buf.Bytes(), &c); err != nil {
 			return ConfigParseError{err}
 		}
-
-	case "hcl":
-		obj, err := hcl.Parse(buf.String())
-		if err != nil {
-			return ConfigParseError{err}
-		}
-		if err = hcl.DecodeObject(&c, obj); err != nil {
-			return ConfigParseError{err}
-		}
-
 	case "toml":
 		tree, err := toml.LoadReader(buf)
 		if err != nil {
@@ -1402,7 +1250,7 @@ func (l *Lung) unmarshalReader(in io.Reader, c map[string]interface{}) error {
 		}
 
 	case "dotenv", "env":
-		env, err := gotenv.StrictParse(buf)
+		env, err := env.StrictParse(buf)
 		if err != nil {
 			return ConfigParseError{err}
 		}
@@ -1444,20 +1292,6 @@ func (l *Lung) marshalWriter(f vfs.File, configType string) error {
 			return ConfigMarshalError{err}
 		}
 		_, err = f.WriteString(string(b))
-		if err != nil {
-			return ConfigMarshalError{err}
-		}
-
-	case "hcl":
-		b, err := json.Marshal(c)
-		if err != nil {
-			return ConfigMarshalError{err}
-		}
-		ast, err := hcl.Parse(string(b))
-		if err != nil {
-			return ConfigMarshalError{err}
-		}
-		err = printer.Fprint(f, ast.Node)
 		if err != nil {
 			return ConfigMarshalError{err}
 		}
@@ -1558,7 +1392,6 @@ func mergeMaps(
 	for sk, sv := range src {
 		tk := keyExists(sk, tgt)
 		if tk == "" {
-			log.Logger.Trace("tk=\"\", tgt[%s]=%v", sk, sv)
 			tgt[sk] = sv
 			if itgt != nil {
 				itgt[sk] = sv
@@ -1568,7 +1401,6 @@ func mergeMaps(
 
 		tv, ok := tgt[tk]
 		if !ok {
-			log.Logger.Trace("tgt[%s] != ok, tgt[%s]=%v", tk, sk, sv)
 			tgt[sk] = sv
 			if itgt != nil {
 				itgt[sk] = sv
@@ -1579,114 +1411,28 @@ func mergeMaps(
 		svType := reflect.TypeOf(sv)
 		tvType := reflect.TypeOf(tv)
 		if svType != tvType {
-			log.Logger.Error(
-				"svType != tvType; key=%s, st=%v, tt=%v, sv=%v, tv=%v",
-				sk, svType, tvType, sv, tv)
+
 			continue
 		}
 
-		log.Logger.Trace("processing key=%s, st=%v, tt=%v, sv=%v, tv=%v",
-			sk, svType, tvType, sv, tv)
-
 		switch ttv := tv.(type) {
 		case map[interface{}]interface{}:
-			log.Logger.Trace("merging maps (must convert)")
+			l.logger.Debug("merging maps (must convert)")
 			tsv := sv.(map[interface{}]interface{})
 			ssv := castToMapStringInterface(tsv)
 			stv := castToMapStringInterface(ttv)
 			mergeMaps(ssv, stv, ttv)
 		case map[string]interface{}:
-			log.Logger.Trace("merging maps")
+			l.logger.Debug("merging maps")
 			mergeMaps(sv.(map[string]interface{}), ttv, nil)
 		default:
-			log.Logger.Trace("setting value")
+			l.logger.Debug("setting value")
 			tgt[tk] = sv
 			if itgt != nil {
 				itgt[tk] = sv
 			}
 		}
 	}
-}
-
-// ReadRemoteConfig attempts to get configuration from a remote source
-// and read it in the remote configuration registry.
-func ReadRemoteConfig() error { return l.ReadRemoteConfig() }
-func (l *Lung) ReadRemoteConfig() error {
-	return l.getKeyValueConfig()
-}
-
-func WatchRemoteConfig() error { return l.WatchRemoteConfig() }
-func (l *Lung) WatchRemoteConfig() error {
-	return l.watchKeyValueConfig()
-}
-
-func (l *Lung) WatchRemoteConfigOnChannel() error {
-	return l.watchKeyValueConfigOnChannel()
-}
-
-// Retrieve the first found remote configuration.
-func (l *Lung) getKeyValueConfig() error {
-	if RemoteConfig == nil {
-		return RemoteConfigError("Enable the remote features by doing a blank import of the lung/remote package: '_ github.com/spf13/lung/remote'")
-	}
-
-	for _, rp := range l.remoteProviders {
-		val, err := l.getRemoteConfig(rp)
-		if err != nil {
-			continue
-		}
-		l.kvstore = val
-		return nil
-	}
-	return RemoteConfigError("No Files Found")
-}
-
-func (l *Lung) getRemoteConfig(provider RemoteProvider) (map[string]interface{}, error) {
-	reader, err := RemoteConfig.Get(provider)
-	if err != nil {
-		return nil, err
-	}
-	err = l.unmarshalReader(reader, l.kvstore)
-	return l.kvstore, err
-}
-
-// Retrieve the first found remote configuration.
-func (l *Lung) watchKeyValueConfigOnChannel() error {
-	for _, rp := range l.remoteProviders {
-		respc, _ := RemoteConfig.WatchChannel(rp)
-		//Todo: Add quit channel
-		go func(rc <-chan *RemoteResponse) {
-			for {
-				b := <-rc
-				reader := bytes.NewReader(b.Value)
-				l.unmarshalReader(reader, l.kvstore)
-			}
-		}(respc)
-		return nil
-	}
-	return RemoteConfigError("No Files Found")
-}
-
-// Retrieve the first found remote configuration.
-func (l *Lung) watchKeyValueConfig() error {
-	for _, rp := range l.remoteProviders {
-		val, err := l.watchRemoteConfig(rp)
-		if err != nil {
-			continue
-		}
-		l.kvstore = val
-		return nil
-	}
-	return RemoteConfigError("No Files Found")
-}
-
-func (l *Lung) watchRemoteConfig(provider RemoteProvider) (map[string]interface{}, error) {
-	reader, err := RemoteConfig.Watch(provider)
-	if err != nil {
-		return nil, err
-	}
-	err = l.unmarshalReader(reader, l.kvstore)
-	return l.kvstore, err
 }
 
 // AllKeys returns all keys holding a value, regardless of where they are set.
@@ -1697,7 +1443,7 @@ func (l *Lung) AllKeys() []string {
 	// add all paths, by order of descending priority to ensure correct shadowing
 	m = l.flattenAndMergeMap(m, castMapStringToMapInterface(l.aliases), "")
 	m = l.flattenAndMergeMap(m, l.override, "")
-	m = l.mergeFlatMap(m, castMapFlagToMapInterface(l.pflags))
+	m = l.mergeFlatMap(m, castMapFlagToMapInterface(l.gflags))
 	m = l.mergeFlatMap(m, castMapStringToMapInterface(l.env))
 	m = l.flattenAndMergeMap(m, l.config, "")
 	m = l.flattenAndMergeMap(m, l.kvstore, "")
@@ -1809,6 +1555,7 @@ func (l *Lung) SetConfigName(in string) {
 
 // SetConfigType sets the type of the configuration returned by the
 // remote source, e.g. "json".
+
 func SetConfigType(in string) { l.SetConfigType(in) }
 func (l *Lung) SetConfigType(in string) {
 	if in != "" {
@@ -1853,11 +1600,11 @@ func (l *Lung) getConfigFile() (string, error) {
 }
 
 func (l *Lung) searchInPath(in string) (filename string) {
-	log.Logger.Debug("Searching for config in ", in)
+	l.logger.Debug("Searching for config in ", viper.String("path",in))
 	for _, ext := range SupportedExts {
-		log.Logger.Debug("Checking for", filepath.Join(in, l.configName+"."+ext))
+		l.logger.Debug("Checking for", viper.String("path", filepath.Join(in, l.configName+"."+ext)))
 		if b, _ := exists(l.fs, filepath.Join(in, l.configName+"."+ext)); b {
-			log.Logger.Debug("Found: ", filepath.Join(in, l.configName+"."+ext))
+			l.logger.Debug("Found: ", viper.String("path", filepath.Join(in, l.configName+"."+ext)))
 			return filepath.Join(in, l.configName+"."+ext)
 		}
 	}
@@ -1868,7 +1615,7 @@ func (l *Lung) searchInPath(in string) (filename string) {
 // Search all configPaths for any config file.
 // Returns the first path that exists (and is a config file).
 func (l *Lung) findConfigFile() (string, error) {
-	log.Logger.Info("Searching for config in ", l.configPaths)
+	l.logger.Info("Searching for config in ", viper.Strings("paths",l.configPaths))
 
 	for _, cp := range l.configPaths {
 		file := l.searchInPath(cp)
@@ -1885,7 +1632,7 @@ func Debug() { l.Debug() }
 func (l *Lung) Debug() {
 	fmt.Printf("Aliases:\n%#v\n", l.aliases)
 	fmt.Printf("Override:\n%#v\n", l.override)
-	fmt.Printf("PFlags:\n%#v\n", l.pflags)
+	fmt.Printf("PFlags:\n%#v\n", l.gflags)
 	fmt.Printf("Env:\n%#v\n", l.env)
 	fmt.Printf("Key/Value Store:\n%#v\n", l.kvstore)
 	fmt.Printf("Config:\n%#v\n", l.config)
